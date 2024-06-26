@@ -36,46 +36,56 @@ var reviewDate time.Time
 
 var idx int
 
-var speedScale int64 = 5
+var speedScale int64 = 50
 
-type responseMsg int
+type responseMsg struct{}
 
-var vocabIdx int = 0
-
-func getNextReviewTime(m map[string][]int) {
-
+func getNextReviewTime(key string, m map[string][]int) int {
+	var reviewTime int
+	if len(m[key]) > 1 {
+		reviewTime = m[key][1] - m[key][0]
+		m[key] = m[key][1:]
+	} else {
+		return -10
+	}
+	return reviewTime
 }
 
-func (m model) updateVocab(sub chan int) tea.Cmd {
+func (m model) updateVocab(sub chan struct{}) tea.Cmd {
 	return func() tea.Msg {
 		for {
-			sub <- vocabIdx
+
 			time.Sleep(time.Duration(1000/speedScale) * time.Millisecond)
-			vocabIdx++
+			sub <- struct{}{}
 		}
 	}
 }
 
 // A command that waits for the activity on a channel.
-func waitForActivity(sub chan int) tea.Cmd {
+func waitForActivity(sub chan struct{}) tea.Cmd {
 	return func() tea.Msg {
 		return responseMsg(<-sub)
 	}
 }
 
 type model struct {
-	sub                chan int // where we'll receive activity notifications
-	userInterfaceIdx   int      // current idx of the UI/view
+	sub                chan struct{} // where we'll receive activity notifications
+	triggerActivity    int           // iterate on this value to trigger update through channel
+	userInterfaceIdx   int           // current idx of the UI/view
 	quitting           bool
 	vocabSlice         []string
-	vocabIdxMap        map[string][]int
-	userInterfaceMap   map[string]int // store idx of where vocab is on the UI/view
-	userInterfaceSlice []string
+	vocabIdxMap        map[string][]int // stores the idx of where particular vocabs occurs in the vocab slice
+	userInterfaceMap   map[string]int   // store idx of where vocab is on the UI/view
+	userInterfaceSlice []vocab          // order of vocab in the UI/view
+}
+
+type vocab struct {
+	fieldStr       string // unparsed fields for anki card
+	nextReviewTime int    // time until next review in ms
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		//listenForActivity(m.sub), // generate activity
 		m.updateVocab(m.sub),
 		waitForActivity(m.sub), // wait for activity
 	)
@@ -87,14 +97,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case responseMsg:
-		_, fnd := m.userInterfaceMap[m.vocabSlice[m.userInterfaceIdx]]
+		key := m.vocabSlice[m.triggerActivity]
+
+		_, fnd := m.userInterfaceMap[key]
 		if fnd {
-			//fmt.Println("FOUND")
+			m.userInterfaceSlice[m.userInterfaceMap[key]].nextReviewTime = getNextReviewTime(key, m.vocabIdxMap)
 		} else {
-			m.userInterfaceSlice = append(m.userInterfaceSlice, m.vocabSlice[m.userInterfaceIdx])
-			m.userInterfaceMap[m.vocabSlice[m.userInterfaceIdx]] = 1
+			m.userInterfaceSlice = append(m.userInterfaceSlice, vocab{fieldStr: key, nextReviewTime: -1}) // new vocab
+			m.userInterfaceMap[key] = m.userInterfaceIdx
+			m.userInterfaceIdx++
 		}
-		m.userInterfaceIdx++
+		m.triggerActivity++
 		return m, waitForActivity(m.sub) // wait for next event
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -107,11 +120,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	s := fmt.Sprintln(style.Render("anki visualizer\n"))
 
+	// sort by latest vocab on the bottom
 	for _, v := range m.userInterfaceSlice {
-		//s += fmt.Sprintln(style.Render(fieldParser(v)[0], strconv.Itoa(m.userInterfaceIdx)))
-		s += fmt.Sprintln(style.Render(fieldParser(v)[7], fieldParser(v)[4], strconv.Itoa(m.userInterfaceIdx)))
-		//s += fmt.Sprintln(style.Render(v, strconv.Itoa(m.userInterfaceIdx)))
-		//s += fmt.Sprintf(style.Render(fieldParser(m.vocabSlice[i])[7], fieldParser(m.vocabSlice[i])[4], strconv.Itoa(i), timeout))
+		s += fmt.Sprintln(style.Render(fieldParser(v.fieldStr)[7], fieldParser(v.fieldStr)[4], strconv.Itoa(v.nextReviewTime)))
+	}
+
+	// sort by oldest vocab on the bottom
+	for i := len(m.userInterfaceSlice) - 1; i >= 0; i-- {
+		s += fmt.Sprintln(style.Render(fieldParser(m.userInterfaceSlice[i].fieldStr)[7], fieldParser(m.userInterfaceSlice[i].fieldStr)[4], strconv.Itoa(m.userInterfaceSlice[i].nextReviewTime)))
 	}
 
 	if m.quitting {
@@ -188,7 +204,8 @@ func main() {
 
 			s = append(s, field)
 
-			vocabStr = fieldSlice[7]
+			//vocabStr = fieldSlice[7]
+			vocabStr = field
 
 			_, found := m[vocabStr]
 			if found {
@@ -209,7 +226,8 @@ func main() {
 	//	}
 
 	//	for i := len(s) - 1; i >= 0; i-- {
-	//		fmt.Println(fieldParser(s[i])[7])
+	//		//fmt.Println(fieldParser(s[i])[7])
+	//		fmt.Println(s[i])
 	//	}
 
 	if err := rows.Err(); err != nil {
@@ -223,13 +241,25 @@ func main() {
 	//			fmt.Printf("\n")
 	//		}
 	//	}
+	//	for k, v := range m {
+	//		fmt.Printf(k)
+	//		for _, idxs := range v {
+	//			fmt.Printf("%s", strconv.Itoa(idxs))
+	//			fmt.Printf("\n")
+	//			fmt.Println("NEXT DURATION", getNextReviewTime(k, m))
+	//		}
+	//	}
 
 	p := tea.NewProgram(model{
-		sub:                make(chan int),
+		sub:                make(chan struct{}),
 		vocabSlice:         s,
 		vocabIdxMap:        m,
+		userInterfaceIdx:   1,
+		triggerActivity:    0,
 		userInterfaceMap:   map[string]int{s[0]: 0},
-		userInterfaceSlice: []string{s[0]},
+		userInterfaceSlice: []vocab{{s[0], 1}},
+		//userInterfaceMap:   make(map[string]int),
+		//userInterfaceSlice: make([]vocab, 0),
 	})
 
 	if _, err := p.Run(); err != nil {
