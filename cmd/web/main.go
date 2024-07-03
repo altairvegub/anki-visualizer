@@ -18,29 +18,75 @@ import (
 var style = lipgloss.NewStyle().
 	Bold(true).
 	Foreground(lipgloss.Color("#FAFAFA")).
-	//Background(lipgloss.Color("#e785ff")).
 	Background(lipgloss.Color("#24001e")).
 	PaddingTop(0).
 	PaddingBottom(0).
 	PaddingLeft(0).
 	PaddingRight(0)
-	//Width(80)
 
-var field string
-var interval int
-var ease int
-var reps int
-var notesId int
-var reviewTime int
-var reviewDate time.Time
+type ColourBrightness struct {
+	ColourRange []string
+	Strength    int
+}
+
+func (c *ColourBrightness) IncreaseStrength() string {
+	if c.Strength < len(c.ColourRange)-1 {
+		c.Strength++
+	}
+	return c.GetColour()
+}
+
+func (c *ColourBrightness) DecreaseStrength() string {
+	if c.Strength > 0 {
+		c.Strength--
+	}
+	return c.GetColour()
+}
+
+func (c *ColourBrightness) GetColour() string {
+	return c.ColourRange[c.Strength]
+}
+
+func NewDefaultColour() *ColourBrightness {
+	c := new(ColourBrightness)
+	//colours := []string{"#24001e",
+	//	"#3a0f37",
+	//	"#4f1e50",
+	//	"#652c69",
+	//	"#7b3b82",
+	//	"#904a9b",
+	//	"#a659b4",
+	//	"#bc67cd",
+	//	"#d176e6",
+	//	"#e785ff"}
+	colours := []string{
+		"#24001e",
+		"#185521",
+		"#0caa23",
+		"#00ff26"}
+
+	c.ColourRange = colours
+
+	c.Strength = 0
+	return c
+}
+
+type Card struct {
+	Field      string
+	Interval   int
+	Ease       int
+	Reps       int
+	NotesId    int
+	ReviewTime int
+	ReviewDate time.Time
+}
 
 var idx int
-
-var speedScale int64 = 50
+var speedScale int64 = 100
 
 type responseMsg struct{}
 
-func getNextReviewTime(key string, m map[string][]int) int {
+func GetNextReviewTime(key string, m map[string][]int) int {
 	var reviewTime int
 	if len(m[key]) > 1 {
 		reviewTime = m[key][1] - m[key][0]
@@ -51,17 +97,15 @@ func getNextReviewTime(key string, m map[string][]int) int {
 	return reviewTime
 }
 
-func (m model) updateVocab(sub chan struct{}) tea.Cmd {
+func (m model) UpdateVocab(sub chan struct{}) tea.Cmd {
 	return func() tea.Msg {
 		for {
-
 			time.Sleep(time.Duration(1000/speedScale) * time.Millisecond)
 			sub <- struct{}{}
 		}
 	}
 }
 
-// A command that waits for the activity on a channel.
 func waitForActivity(sub chan struct{}) tea.Cmd {
 	return func() tea.Msg {
 		return responseMsg(<-sub)
@@ -69,25 +113,27 @@ func waitForActivity(sub chan struct{}) tea.Cmd {
 }
 
 type model struct {
-	sub                chan struct{} // where we'll receive activity notifications
-	triggerActivity    int           // iterate on this value to trigger update through channel
-	userInterfaceIdx   int           // current idx of the UI/view
-	quitting           bool
-	vocabSlice         []string
-	vocabIdxMap        map[string][]int // stores the idx of where particular vocabs occurs in the vocab slice
-	userInterfaceMap   map[string]int   // store idx of where vocab is on the UI/view
-	userInterfaceSlice []vocab          // order of vocab in the UI/view
+	sub              chan struct{} // where we'll receive activity notifications
+	triggerActivity  int           // iterate on this value to trigger update through channel
+	userInterfaceIdx int           // current idx of the UI/view
+	quitting         bool
+	vocab            []string
+	vocabIndexes     map[string][]int // stores the idx of where particular vocabs occurs in the vocab slice
+	vocabViewIndexes map[string]int   // store idx of where vocab is on the UI/view
+	vocabView        []Vocab          // order of vocab in the UI/view
+	clrBrightness    *ColourBrightness
 }
 
-type vocab struct {
-	fieldStr       string // unparsed fields for anki card
-	nextReviewTime int    // time until next review in ms
+type Vocab struct {
+	FieldStr       string // unparsed fields for anki card
+	NextReviewTime int    // time until next review in ms
+	Colour         *ColourBrightness
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		m.updateVocab(m.sub),
-		waitForActivity(m.sub), // wait for activity
+		m.UpdateVocab(m.sub),
+		waitForActivity(m.sub),
 	)
 }
 
@@ -97,14 +143,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case responseMsg:
-		key := m.vocabSlice[m.triggerActivity]
+		key := m.vocab[m.triggerActivity]
 
-		_, fnd := m.userInterfaceMap[key]
+		_, fnd := m.vocabViewIndexes[key]
 		if fnd {
-			m.userInterfaceSlice[m.userInterfaceMap[key]].nextReviewTime = getNextReviewTime(key, m.vocabIdxMap)
+			reviewTime := GetNextReviewTime(key, m.vocabIndexes)
+			if m.vocabView[m.vocabViewIndexes[key]].NextReviewTime <= reviewTime {
+				m.vocabView[m.vocabViewIndexes[key]].Colour.IncreaseStrength()
+			} else {
+				m.vocabView[m.vocabViewIndexes[key]].Colour.DecreaseStrength()
+			}
+			m.vocabView[m.vocabViewIndexes[key]].NextReviewTime = reviewTime
 		} else {
-			m.userInterfaceSlice = append(m.userInterfaceSlice, vocab{fieldStr: key, nextReviewTime: -1}) // new vocab
-			m.userInterfaceMap[key] = m.userInterfaceIdx
+			m.vocabView = append(m.vocabView, Vocab{FieldStr: key, NextReviewTime: -1, Colour: NewDefaultColour()}) // new vocab
+			m.vocabViewIndexes[key] = m.userInterfaceIdx
 			m.userInterfaceIdx++
 		}
 		m.triggerActivity++
@@ -118,17 +170,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	s := fmt.Sprintln(style.Render("anki visualizer\n"))
+	s := fmt.Sprintln(style.Render("anki visualizer"))
+	s += "\n"
 
 	// sort by latest vocab on the bottom
-	for _, v := range m.userInterfaceSlice {
-		s += fmt.Sprintln(style.Render(fieldParser(v.fieldStr)[7], fieldParser(v.fieldStr)[4], strconv.Itoa(v.nextReviewTime)))
+	for _, v := range m.vocabView {
+		style = lipgloss.NewStyle().Background(lipgloss.Color(v.Colour.GetColour())).Inherit(style)
+		s += fmt.Sprintln(style.Render(fieldParser(v.FieldStr)[7], fieldParser(v.FieldStr)[4], strconv.Itoa(v.NextReviewTime)))
+		//	style = lipgloss.NewStyle().Background(lipgloss.Color(m.vocabView[i].Colour.GetColour())).Inherit(style)
+		//	s += fmt.Sprintf(style.Render(fieldParser(m.vocabView[i].FieldStr)[7], fieldParser(m.vocabView[i].FieldStr)[4], strconv.Itoa(m.vocabView[i].NextReviewTime)))
+		//	s += "\n"
 	}
 
 	// sort by oldest vocab on the bottom
-	for i := len(m.userInterfaceSlice) - 1; i >= 0; i-- {
-		s += fmt.Sprintln(style.Render(fieldParser(m.userInterfaceSlice[i].fieldStr)[7], fieldParser(m.userInterfaceSlice[i].fieldStr)[4], strconv.Itoa(m.userInterfaceSlice[i].nextReviewTime)))
-	}
+	//for i := len(m.vocabView) - 1; i >= 0; i-- {
+	//	style = lipgloss.NewStyle().Background(lipgloss.Color(m.vocabView[i].Colour.GetColour())).Inherit(style)
+	//	s += fmt.Sprintf(style.Render(fieldParser(m.vocabView[i].FieldStr)[7], fieldParser(m.vocabView[i].FieldStr)[4], strconv.Itoa(m.vocabView[i].NextReviewTime)))
+	//	s += "\n"
+	//}
 
 	if m.quitting {
 		s += "\n"
@@ -156,10 +215,6 @@ func fieldParser(str string) []string {
 	return parts
 }
 
-func calcDuration(duration int) {
-	//	var timeInMs int
-}
-
 func main() {
 	db, err := sql.Open("sqlite3", "./collection.anki2")
 	if err != nil {
@@ -183,36 +238,35 @@ func main() {
 	}
 	defer rows.Close()
 
-	m := make(map[string][]int)
-	var s []string
-
+	vocabIndexes := make(map[string][]int)
+	var vocab []string
 	var vocabStr string
-
+	c := &Card{}
 	idx = 0
 
 	for rows.Next() {
-		err := rows.Scan(&field, &interval, &ease, &reps, &notesId, &reviewTime)
+		err := rows.Scan(&c.Field, &c.Interval, &c.Ease, &c.Reps, &c.NotesId, &c.ReviewTime)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		fieldSlice := fieldParser(field)
-		if len(fieldSlice) > 24 { //filter out reviews not from the core10k deck
+		fields := fieldParser(c.Field)
+		if len(fields) > 24 { //filter out reviews not from the core10k deck
 			//fmt.Println(style.Render("cards.nid", strconv.Itoa(notesId), fieldSlice[7], fieldSlice[4], "cards.ivl", strconv.Itoa(interval), "revlog.ease", strconv.Itoa(ease), "cards.reps", strconv.Itoa(reps)))
 			//reviewDate = time.UnixMilli(int64(reviewTime))
 			//fmt.Println(reviewDate, reviewDate.Day(), reviewTime)
 
-			s = append(s, field)
+			vocab = append(vocab, c.Field)
 
 			//vocabStr = fieldSlice[7]
-			vocabStr = field
+			vocabStr = c.Field
 
-			_, found := m[vocabStr]
+			_, found := vocabIndexes[vocabStr]
 			if found {
-				m[vocabStr] = append(m[vocabStr], idx)
+				vocabIndexes[vocabStr] = append(vocabIndexes[vocabStr], idx)
 			} else {
-				m[vocabStr] = make([]int, 1)
-				m[vocabStr][0] = idx
+				vocabIndexes[vocabStr] = make([]int, 1)
+				vocabIndexes[vocabStr][0] = idx
 			}
 
 			idx++
@@ -244,22 +298,26 @@ func main() {
 	//	for k, v := range m {
 	//		fmt.Printf(k)
 	//		for _, idxs := range v {
+	//			if  {
 	//			fmt.Printf("%s", strconv.Itoa(idxs))
 	//			fmt.Printf("\n")
 	//			fmt.Println("NEXT DURATION", getNextReviewTime(k, m))
+	//			}
+	//		//	fmt.Printf("%s", strconv.Itoa(idxs))
+	//		//	fmt.Printf("\n")
+	//		//	fmt.Println("NEXT DURATION", getNextReviewTime(k, m))
 	//		}
 	//	}
 
 	p := tea.NewProgram(model{
-		sub:                make(chan struct{}),
-		vocabSlice:         s,
-		vocabIdxMap:        m,
-		userInterfaceIdx:   1,
-		triggerActivity:    0,
-		userInterfaceMap:   map[string]int{s[0]: 0},
-		userInterfaceSlice: []vocab{{s[0], 1}},
-		//userInterfaceMap:   make(map[string]int),
-		//userInterfaceSlice: make([]vocab, 0),
+		sub:              make(chan struct{}),
+		vocab:            vocab,
+		vocabIndexes:     vocabIndexes,
+		userInterfaceIdx: 1,
+		triggerActivity:  0,
+		vocabViewIndexes: map[string]int{vocab[0]: 0},
+		vocabView:        []Vocab{{vocab[0], 1, NewDefaultColour()}},
+		clrBrightness:    NewDefaultColour(),
 	})
 
 	if _, err := p.Run(); err != nil {
