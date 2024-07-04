@@ -31,7 +31,8 @@ var headerStyle = lipgloss.NewStyle().
 	PaddingBottom(0).
 	PaddingLeft(0).
 	PaddingRight(0).
-	Width(60).
+	//Width(60). //  eng view
+	Width(119). // four col view
 	Align(lipgloss.Center)
 
 var style = lipgloss.NewStyle().
@@ -204,11 +205,22 @@ func (m model) View() string {
 	s += "\n"
 
 	// sort by latest vocab on the bottom
+	// two column view
 	for _, v := range m.vocabView {
 		style = lipgloss.NewStyle().Background(lipgloss.Color(v.Colour.GetColour())).Inherit(style)
 		s += fmt.Sprintf(style.Render(fieldParser(v.FieldStr)[KanjiHiragana]))
 		s += " " + fmt.Sprintf(englishStyle.Render(fieldParser(v.FieldStr)[EngTranslation])) + "\n"
 	}
+
+	//grid view
+	//	for i, v := range m.vocabView {
+	//		style = lipgloss.NewStyle().Background(lipgloss.Color(v.Colour.GetColour())).Inherit(style)
+	//		s += fmt.Sprintf(style.Render(fieldParser(v.FieldStr)[KanjiHiragana]))
+	//		if i%3 == 2 { // 3 wide
+	//			//if i%4 == 3 { // 4 wide
+	//			s += "\n"
+	//		}
+	//	}
 
 	//for i := range m.userInterfaceIdx {
 	//	style = lipgloss.NewStyle().Background(lipgloss.Color(m.vocabView[i].Colour.GetColour())).Inherit(style)
