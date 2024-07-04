@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,10 +14,40 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+const ( // anki fields
+	Kanji               = 2
+	Hiragana            = 3
+	KanjiHiragana       = 7
+	EngTranslation      = 4
+	Core10kCardFieldNum = 24
+	AnkiDelimiter       = rune(0x1F)
+)
+
+var headerStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#FAFAFA")).
+	BorderStyle(lipgloss.NormalBorder()).
+	PaddingTop(0).
+	PaddingBottom(0).
+	PaddingLeft(0).
+	PaddingRight(0).
+	Width(60).
+	Align(lipgloss.Center)
+
 var style = lipgloss.NewStyle().
 	Bold(true).
 	Foreground(lipgloss.Color("#FAFAFA")).
 	Background(lipgloss.Color("#24001e")).
+	PaddingTop(0).
+	PaddingBottom(0).
+	PaddingLeft(0).
+	PaddingRight(0).
+	Width(30).
+	Align(lipgloss.Center)
+
+var englishStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#FAFAFA")).
 	PaddingTop(0).
 	PaddingBottom(0).
 	PaddingLeft(0).
@@ -82,7 +111,7 @@ type Card struct {
 }
 
 var idx int
-var speedScale int64 = 100
+var speedScale int64 = 50
 
 type responseMsg struct{}
 
@@ -157,6 +186,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.vocabView = append(m.vocabView, Vocab{FieldStr: key, NextReviewTime: -1, Colour: NewDefaultColour()}) // new vocab
 			m.vocabViewIndexes[key] = m.userInterfaceIdx
+			//m.vocabView[m.userInterfaceIdx] = Vocab{FieldStr: key, NextReviewTime: -1, Colour: NewDefaultColour()}
 			m.userInterfaceIdx++
 		}
 		m.triggerActivity++
@@ -170,18 +200,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	s := fmt.Sprintln(style.Render("anki visualizer"))
+	s := fmt.Sprintln(headerStyle.Render("anki visualizer"))
 	s += "\n"
 
 	// sort by latest vocab on the bottom
 	for _, v := range m.vocabView {
 		style = lipgloss.NewStyle().Background(lipgloss.Color(v.Colour.GetColour())).Inherit(style)
-		s += fmt.Sprintln(style.Render(fieldParser(v.FieldStr)[7], fieldParser(v.FieldStr)[4], strconv.Itoa(v.NextReviewTime)))
-		//	style = lipgloss.NewStyle().Background(lipgloss.Color(m.vocabView[i].Colour.GetColour())).Inherit(style)
-		//	s += fmt.Sprintf(style.Render(fieldParser(m.vocabView[i].FieldStr)[7], fieldParser(m.vocabView[i].FieldStr)[4], strconv.Itoa(m.vocabView[i].NextReviewTime)))
-		//	s += "\n"
+		s += fmt.Sprintf(style.Render(fieldParser(v.FieldStr)[KanjiHiragana]))
+		s += " " + fmt.Sprintf(englishStyle.Render(fieldParser(v.FieldStr)[EngTranslation])) + "\n"
 	}
 
+	//for i := range m.userInterfaceIdx {
+	//	style = lipgloss.NewStyle().Background(lipgloss.Color(m.vocabView[i].Colour.GetColour())).Inherit(style)
+	//	s += fmt.Sprintf(style.Render(fieldParser(m.vocabView[i].FieldStr)[KanjiHiragana]))
+	//	s += " " + fmt.Sprintf(englishStyle.Render(fieldParser(m.vocabView[i].FieldStr)[EngTranslation])) + "\n"
+	//}
 	// sort by oldest vocab on the bottom
 	//for i := len(m.vocabView) - 1; i >= 0; i-- {
 	//	style = lipgloss.NewStyle().Background(lipgloss.Color(m.vocabView[i].Colour.GetColour())).Inherit(style)
@@ -197,22 +230,19 @@ func (m model) View() string {
 
 func fieldParser(str string) []string {
 	// define delimiter from anki deck (0x1F)
-	delimiter := string(rune(0x1F))
+	delimiter := string(AnkiDelimiter)
 
-	// split the string using the delimiter
 	parts := strings.Split(str, delimiter)
-	// japanese to english
-	// indexes
-	// 2 = kanji
-	// 3 = hiragana
-	// 4 = english translation
-	// 7 = kanji + hiragana
-
-	//for i, part := range parts {
-	//	fmt.Printf("Part %d: %s\n", i+1, part)
-	//}
 
 	return parts
+}
+
+func IntializeViewSlice(len int, v []string) *[]Vocab {
+	vocab := Vocab{FieldStr: v[0], NextReviewTime: 1, Colour: NewDefaultColour()}
+	viewVocab := make([]Vocab, len)
+	viewVocab[0] = vocab
+
+	return &viewVocab
 }
 
 func main() {
@@ -251,8 +281,7 @@ func main() {
 		}
 
 		fields := fieldParser(c.Field)
-		if len(fields) > 24 { //filter out reviews not from the core10k deck
-			//fmt.Println(style.Render("cards.nid", strconv.Itoa(notesId), fieldSlice[7], fieldSlice[4], "cards.ivl", strconv.Itoa(interval), "revlog.ease", strconv.Itoa(ease), "cards.reps", strconv.Itoa(reps)))
+		if len(fields) > Core10kCardFieldNum {
 			//reviewDate = time.UnixMilli(int64(reviewTime))
 			//fmt.Println(reviewDate, reviewDate.Day(), reviewTime)
 
@@ -275,39 +304,9 @@ func main() {
 		}
 	}
 
-	//	for _, v := range s {
-	//		fmt.Println(fieldParser(v)[7])
-	//	}
-
-	//	for i := len(s) - 1; i >= 0; i-- {
-	//		//fmt.Println(fieldParser(s[i])[7])
-	//		fmt.Println(s[i])
-	//	}
-
 	if err := rows.Err(); err != nil {
 		log.Fatal(err)
 	}
-
-	//	for k, v := range m {
-	//		fmt.Printf(k)
-	//		for _, idxs := range v {
-	//			fmt.Printf("%s", strconv.Itoa(idxs))
-	//			fmt.Printf("\n")
-	//		}
-	//	}
-	//	for k, v := range m {
-	//		fmt.Printf(k)
-	//		for _, idxs := range v {
-	//			if  {
-	//			fmt.Printf("%s", strconv.Itoa(idxs))
-	//			fmt.Printf("\n")
-	//			fmt.Println("NEXT DURATION", getNextReviewTime(k, m))
-	//			}
-	//		//	fmt.Printf("%s", strconv.Itoa(idxs))
-	//		//	fmt.Printf("\n")
-	//		//	fmt.Println("NEXT DURATION", getNextReviewTime(k, m))
-	//		}
-	//	}
 
 	p := tea.NewProgram(model{
 		sub:              make(chan struct{}),
@@ -317,7 +316,8 @@ func main() {
 		triggerActivity:  0,
 		vocabViewIndexes: map[string]int{vocab[0]: 0},
 		vocabView:        []Vocab{{vocab[0], 1, NewDefaultColour()}},
-		clrBrightness:    NewDefaultColour(),
+		//vocabView:     *IntializeViewSlice(len(vocabIndexes), vocab),
+		clrBrightness: NewDefaultColour(),
 	})
 
 	if _, err := p.Run(); err != nil {
